@@ -1,6 +1,3 @@
-/**
- * Created by pjones on 12/8/14.
- */
 package com.inductiveautomation.ignition.examples.stp;
 
 import java.security.SecureRandom;
@@ -13,10 +10,8 @@ import javax.net.ssl.X509TrustManager;
 
 import com.inductiveautomation.ignition.common.TypeUtilities;
 import com.inductiveautomation.ignition.common.licensing.LicenseState;
-import com.inductiveautomation.ignition.common.model.values.CommonQualities;
-import com.inductiveautomation.ignition.common.model.values.Quality;
+import com.inductiveautomation.ignition.common.model.values.QualityCode;
 import com.inductiveautomation.ignition.common.sqltags.model.TagPath;
-import com.inductiveautomation.ignition.common.sqltags.model.types.DataQuality;
 import com.inductiveautomation.ignition.common.sqltags.model.types.DataType;
 import com.inductiveautomation.ignition.common.sqltags.model.types.ExtendedTagType;
 import com.inductiveautomation.ignition.common.sqltags.model.types.TagEditingFlags;
@@ -46,6 +41,7 @@ import org.eclipse.paho.client.mqttv3.persist.MemoryPersistence;
  */
 public class SimpleProviderGatewayHook extends AbstractGatewayModuleHook {
     private static final String TASK_NAME = "UpdateSampleValues";
+    private static final String PROVIDER_NAME = "DynamicTags";
     //This pattern will be used for tag names. So, tags will be created under the "Custom Tags" folder.
     private static final String TAG_NAME_PATTERN = "Custom Tags/Tag %d";
     //This is the name of our "control" tag. It will be in the root folder.
@@ -65,34 +61,7 @@ public class SimpleProviderGatewayHook extends AbstractGatewayModuleHook {
     public void setup(GatewayContext context) {
         try {
             this.context = context;
-            ourProvider = new SimpleTagProvider("DynamicTags");
-
-            //Set up our tag type. By doing this, we can allow our tags to use alerting, history, etc.
-            //The STANDARD_STATUS flag set in TagEditingFlags provides for all features, without allowing tags to
-            //be renamed.
-            ourTagType = TagType.Custom;
-            ourProvider.configureTagType(ourTagType, TagEditingFlags.STANDARD_STATUS, null);
-
-            // Needed to allow tag configuration to be editable. Comment this out to disable tag configuration editing.
-            ProviderConfiguration config = new ProviderConfiguration().setAllowTagCustomization(true);
-            ourProvider.configureProvider(config);
-
-            //Set up the control tag.
-            //1) Register the tag, and configure its type.
-            //2) Register the write handler, so the tag can be modified.
-            ourProvider.configureTag(CONTROL_TAG, DataType.Int4, ourTagType);
-            ourProvider.registerWriteHandler(CONTROL_TAG, new WriteHandler() {
-                @Override
-                public Quality write(TagPath target, Object value) {
-                    Integer intVal = TypeUtilities.toInteger(value);
-                    //The adjustTags function will add/remove tags, AND update the current value of the control tag.
-                    adjustTags(intVal);
-                    return CommonQualities.GOOD;
-                }
-            });
-
-            //Now set up our first batch of tags.
-            adjustTags(10);
+            ourProvider = new SimpleTagProvider(PROVIDER_NAME);
         } catch (Exception e) {
             logger.fatal("Error setting up SimpleTagProvider example module.", e);
         }
@@ -102,6 +71,33 @@ public class SimpleProviderGatewayHook extends AbstractGatewayModuleHook {
     public void startup(LicenseState activationState) {
         try {
             ourProvider.startup(context);
+
+            //Set up our tag type. By doing this, we can allow our tags to use alerting, history, etc.
+            //The STANDARD_STATUS flag set in TagEditingFlags provides for all features, without allowing tags to
+            //be renamed.
+            ourTagType = TagType.Custom;
+            ourProvider.configureTagType(ourTagType, TagEditingFlags.STANDARD_STATUS, null);
+
+            // Needed to allow tag configuration to be editable. Comment this out to disable tag configuration editing.
+            ProviderConfiguration config = new ProviderConfiguration(PROVIDER_NAME).setAllowTagCustomization(true);
+            ourProvider.configureProvider(config);
+
+            //Set up the control tag.
+            //1) Register the tag, and configure its type.
+            //2) Register the write handler, so the tag can be modified.
+            ourProvider.configureTag(CONTROL_TAG, DataType.Int4, ourTagType);
+            ourProvider.registerWriteHandler(CONTROL_TAG, new WriteHandler() {
+                @Override
+                public QualityCode write(TagPath target, Object value) {
+                    Integer intVal = TypeUtilities.toInteger(value);
+                    //The adjustTags function will add/remove tags, AND update the current value of the control tag.
+                    adjustTags(intVal);
+                    return QualityCode.Good;
+                }
+            });
+
+            //Now set up our first batch of tags.
+            adjustTags(10);
 
             //Register a task with the execution system to update values every second.
             context.getExecutionManager().register(getClass().getName(), TASK_NAME, new Runnable() {
@@ -162,17 +158,17 @@ public class SimpleProviderGatewayHook extends AbstractGatewayModuleHook {
 
     private static SSLSocketFactory createSocketFactory() throws Exception {
         TrustManager[] naiveTrustManager = new TrustManager[]{
-                new X509TrustManager() {
-                    public X509Certificate[] getAcceptedIssuers() {
-                        return new X509Certificate[0];
-                    }
-
-                    public void checkClientTrusted(X509Certificate[] certs, String authType) {
-                    }
-
-                    public void checkServerTrusted(X509Certificate[] certs, String authType) {
-                    }
+            new X509TrustManager() {
+                public X509Certificate[] getAcceptedIssuers() {
+                    return new X509Certificate[0];
                 }
+
+                public void checkClientTrusted(X509Certificate[] certs, String authType) {
+                }
+
+                public void checkServerTrusted(X509Certificate[] certs, String authType) {
+                }
+            }
         };
 
         SSLContext sc = SSLContext.getInstance("SSL");
@@ -202,7 +198,7 @@ public class SimpleProviderGatewayHook extends AbstractGatewayModuleHook {
      * updating the values asynchronously. If we weren't careful to synchronize the threading, it might happen that
      * right as we remove tags, they're added again implicitly, because the value update is happening at the same time.
      *
-     * @param newCount
+     * @param newCount Updated Count of Generated Tags.
      */
     protected synchronized void adjustTags(int newCount) {
         if (newCount > currentTagCount) {
@@ -217,7 +213,7 @@ public class SimpleProviderGatewayHook extends AbstractGatewayModuleHook {
         //Update current count.
         currentTagCount = newCount;
         //Make sure to update the control tag with the current value.
-        ourProvider.updateValue(CONTROL_TAG, currentTagCount, DataQuality.GOOD_DATA);
+        ourProvider.updateValue(CONTROL_TAG, currentTagCount, QualityCode.Good);
     }
 
     /**
@@ -226,7 +222,7 @@ public class SimpleProviderGatewayHook extends AbstractGatewayModuleHook {
     protected synchronized void updateValues() {
         Random r = new Random();
         for (int i = 0; i < currentTagCount; i++) {
-            ourProvider.updateValue(String.format(TAG_NAME_PATTERN, i), r.nextFloat(), DataQuality.GOOD_DATA);
+            ourProvider.updateValue(String.format(TAG_NAME_PATTERN, i), r.nextFloat(), QualityCode.Good);
         }
     }
 }
